@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Calorias</title>
+<style>
+  :root { --verde:#2e7d32; --bg:#f4f7f4; --card:#fff; --txt:#1c2a1c; --erro:#c62828; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--txt); }
+  header { background:var(--verde); color:#fff; padding:16px 24px; }
+  header h1 { margin:0; font-size:1.4rem; }
+  main { max-width:1000px; margin:20px auto; padding:0 16px; display:grid; gap:16px; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); }
+  section { background:var(--card); border-radius:10px; padding:16px; box-shadow:0 1px 4px rgba(0,0,0,.1); }
+  section.largo { grid-column:1/-1; }
+  h2 { margin-top:0; font-size:1.1rem; color:var(--verde); }
+  label { display:block; font-size:.85rem; margin:8px 0 2px; }
+  input, select, button { width:100%; padding:8px; border:1px solid #bbb; border-radius:6px; font-size:.95rem; }
+  button { background:var(--verde); color:#fff; border:0; cursor:pointer; margin-top:10px; }
+  button.peq { width:auto; padding:3px 8px; margin:0; background:var(--erro); }
+  table { width:100%; border-collapse:collapse; font-size:.9rem; }
+  th, td { text-align:left; padding:6px; border-bottom:1px solid #e3e3e3; }
+  .total { font-size:2rem; font-weight:700; }
+  .barra { height:14px; background:#ddd; border-radius:7px; overflow:hidden; margin:8px 0; }
+  .barra div { height:100%; background:var(--verde); transition:width .3s; }
+  .barra.estourou div { background:var(--erro); }
+  #msg { color:var(--erro); min-height:1.2em; font-size:.9rem; }
+  ul { padding-left:18px; font-size:.8rem; max-height:160px; overflow:auto; }
+</style>
+</head>
+<body>
+<header><h1>🥗 Controle de Calorias</h1></header>
+<main>
+  <section>
+    <h2>Resumo do dia</h2>
+    <label>Data</label><input type="date" id="dataFiltro">
+    <div class="total"><span id="total">0</span> kcal</div>
+    <div class="barra" id="barra"><div id="progresso" style="width:0"></div></div>
+    <div id="detalheResumo"></div>
+    <label>Meta diária (kcal)</label>
+    <input type="number" id="meta" min="1">
+    <button onclick="salvarMeta()">Salvar meta</button>
+  </section>
+
+  <section>
+    <h2>Registrar consumo</h2>
+    <label>Alimento</label><select id="regAlimento"></select>
+    <label>Quantidade (g)</label><input type="number" id="regGramas" min="1" value="100">
+    <label>Refeição</label>
+    <select id="regTipo">
+      <option value="CAFE_DA_MANHA">Café da manhã</option>
+      <option value="ALMOCO">Almoço</option>
+      <option value="LANCHE">Lanche</option>
+      <option value="JANTAR">Jantar</option>
+    </select>
+    <button onclick="registrar()">Adicionar</button>
+    <div id="msg"></div>
+  </section>
+
+  <section>
+    <h2>Calculadora de TMB</h2>
+    <label>Peso (kg)</label><input type="number" id="peso" value="70">
+    <label>Altura (cm)</label><input type="number" id="altura" value="170">
+    <label>Idade</label><input type="number" id="idade" value="25">
+    <label>Sexo</label><select id="sexo"><option>MASCULINO</option><option>FEMININO</option></select>
+    <label>Fórmula</label><select id="formula"><option value="MIFFLIN">Mifflin-St Jeor</option><option value="HARRIS_BENEDICT">Harris-Benedict</option></select>
+    <label>Atividade</label><select id="atividade"><option>SEDENTARIO</option><option>LEVE</option><option>MODERADO</option><option>INTENSO</option></select>
+    <button onclick="calcularTmb()">Calcular</button>
+    <div id="tmbResultado"></div>
+  </section>
+
+  <section class="largo">
+    <h2>Consumo do dia</h2>
+    <table><thead><tr><th>Refeição</th><th>Alimento</th><th>g</th><th>kcal</th><th></th></tr></thead>
+    <tbody id="tabelaRegistros"></tbody></table>
+  </section>
+
+  <section>
+    <h2>Cadastrar alimento</h2>
+    <label>Nome</label><input id="novoNome">
+    <label>kcal por 100g</label><input type="number" id="novoKcal" min="0">
+    <label>Categoria</label><input id="novoCat">
+    <button onclick="criarAlimento()">Cadastrar</button>
+  </section>
+
+  <section>
+    <h2>Auditoria (Singleton + Observer)</h2>
+    <ul id="auditoria"></ul>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const hoje = new Date().toISOString().slice(0, 10);
+$('dataFiltro').value = hoje;
+$('dataFiltro').addEventListener('change', carregarDia);
+
+async function api(url, opts) {
+  const r = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error(e.erro || 'Erro ' + r.status);
+  }
+  return r.status === 204 ? null : r.json();
+}
+
+function erro(e) { $('msg').textContent = e.message; setTimeout(() => $('msg').textContent = '', 4000); }
+
+async function carregarAlimentos() {
+  const lista = await api('/api/alimentos');
+  $('regAlimento').innerHTML = lista.map(a => `<option value="${a.id}">${a.nome} (${a.caloriasPor100g} kcal/100g)</option>`).join('');
+}
+
+async function carregarDia() {
+  const data = $('dataFiltro').value;
+  const [resumo, regs, meta, log] = await Promise.all([
+    api('/api/resumo?data=' + data), api('/api/registros?data=' + data),
+    api('/api/meta'), api('/api/auditoria')]);
+  $('total').textContent = resumo.totalCalorias.toFixed(1);
+  const pct = Math.min(100, resumo.totalCalorias / resumo.meta * 100);
+  $('progresso').style.width = pct + '%';
+  $('barra').classList.toggle('estourou', resumo.ultrapassou);
+  $('detalheResumo').textContent = resumo.ultrapassou
+    ? `Meta ultrapassada em ${Math.abs(resumo.restante).toFixed(1)} kcal`
+    : `Restam ${resumo.restante.toFixed(1)} kcal da meta de ${resumo.meta}`;
+  $('meta').value = meta.caloriasDiarias;
+  $('tabelaRegistros').innerHTML = regs.map(r => `<tr><td>${r.tipo.replaceAll('_',' ')}</td><td>${r.alimento.nome}</td>
+    <td>${r.gramas}</td><td>${r.calorias}</td><td><button class="peq" onclick="remover(${r.id})">x</button></td></tr>`).join('')
+    || '<tr><td colspan="5">Nenhum registro neste dia.</td></tr>';
+  $('auditoria').innerHTML = log.map(l => `<li>${l}</li>`).join('');
+}
+
+async function registrar() {
+  try {
+    await api('/api/registros', { method: 'POST', body: JSON.stringify({
+      alimentoId: +$('regAlimento').value, gramas: +$('regGramas').value,
+      tipo: $('regTipo').value, data: $('dataFiltro').value }) });
+    carregarDia();
+  } catch (e) { erro(e); }
+}
+
+async function remover(id) { await api('/api/registros/' + id, { method: 'DELETE' }); carregarDia(); }
+
+async function salvarMeta() {
+  try { await api('/api/meta', { method: 'PUT', body: JSON.stringify({ caloriasDiarias: +$('meta').value }) }); carregarDia(); }
+  catch (e) { erro(e); }
+}
+
+async function criarAlimento() {
+  try {
+    await api('/api/alimentos', { method: 'POST', body: JSON.stringify({
+      nome: $('novoNome').value, caloriasPor100g: +$('novoKcal').value, categoria: $('novoCat').value }) });
+    $('novoNome').value = $('novoKcal').value = $('novoCat').value = '';
+    carregarAlimentos();
+  } catch (e) { erro(e); }
+}
+
+async function calcularTmb() {
+  const q = new URLSearchParams({ peso: $('peso').value, altura: $('altura').value, idade: $('idade').value,
+    sexo: $('sexo').value, formula: $('formula').value, atividade: $('atividade').value });
+  try {
+    const r = await api('/api/tmb?' + q);
+    $('tmbResultado').innerHTML = `<p>TMB: <b>${r.tmb} kcal</b><br>Gasto diário: <b>${r.gastoDiario} kcal</b></p>`;
+  } catch (e) { $('tmbResultado').textContent = e.message; }
+}
+
+carregarAlimentos().then(carregarDia);
+</script>
+</body>
+</html>
